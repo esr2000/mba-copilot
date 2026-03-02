@@ -398,7 +398,31 @@ def extract_structured_chunks(file: UploadFile) -> list[dict[str, Any]]:
 
         text = content.decode("utf-8-sig", errors="replace")
     elif filename.endswith(".pdf"):
-        text = _extract_pdf_text_best_fidelity(content)
+    # Extract per page so we can cite page numbers later
+    pages = _extract_pdf_with_pages(content)
+    if not pages:
+        return []
+
+    structured_chunks: list[dict[str, Any]] = []
+    for p in pages:
+        page_text = str(p.get("text", "")).strip()
+        if not page_text:
+            continue
+
+        page_chunks = chunk_by_tokens(
+            page_text,
+            chunk_tokens=config.CHUNK_TOKENS_DOCS,
+            overlap_tokens=config.CHUNK_OVERLAP_TOKENS_DOCS,
+        )
+
+        for ci, ch in enumerate(page_chunks):
+            structured_chunks.append({
+                "text": ch,
+                "chunk_index": len(structured_chunks),
+                "page_number": int(p.get("page_number", 0)),
+            })
+
+    return structured_chunks
     elif filename.endswith(".docx"):
         text = _extract_docx_text(content)
     elif filename.endswith((".txt", ".md")):
@@ -692,13 +716,25 @@ async def chat(request: ChatRequest) -> ChatResponse:
         else:
             context_chunks = []
 
-        # Build context
-        if context_chunks:
-            context = "\n\n---\n\n".join(
-                [f"[Source: {c['filename']}]\n{c['text']}" for c in context_chunks]
-            )
-        else:
-            context = ""
+        def _format_source_label(c: dict[str, Any]) -> str:
+    md = c.get("metadata") or {}
+    fn = c.get("filename") or "unknown"
+    page = md.get("page_number")
+    slide = md.get("slide_number")
+
+    if page:
+        return f"{fn} (p. {page})"
+    if slide:
+        return f"{fn} (slide {slide})"
+    return fn
+
+# Build context
+if context_chunks:
+    context = "\n\n---\n\n".join(
+        [f"[Source: {_format_source_label(c)}]\n{c['text']}" for c in context_chunks]
+    )
+else:
+    context = ""
 
         answer = generate_answer(
             request.message,
@@ -786,6 +822,8 @@ async def upload(
                     "text": structured_chunk["text"],
                     "document_id": document_id,
                     "filename": display_filename,
+                    "page_number": structured_chunk.get("page_number"),
+                    "slide_number": structured_chunk.get("slide_number"),
                     "chunk_index": i,
                     "total_chunks": len(structured_chunks),
                     "uploaded_at": uploaded_at,
