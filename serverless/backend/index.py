@@ -415,14 +415,17 @@ def extract_structured_chunks(file: UploadFile) -> list[dict[str, Any]]:
             overlap_tokens=config.CHUNK_OVERLAP_TOKENS_DOCS,
         )
 
-        for ci, ch in enumerate(page_chunks):
-            structured_chunks.append({
-                "text": ch,
-                "chunk_index": len(structured_chunks),
-                "page_number": int(p.get("page_number", 0)),
-            })
+        for ch in page_chunks:
+            structured_chunks.append(
+                {
+                    "text": ch,
+                    "chunk_index": len(structured_chunks),
+                    "page_number": int(p.get("page_number", 0)),
+                }
+            )
 
     return structured_chunks
+    
     elif filename.endswith(".docx"):
         text = _extract_docx_text(content)
     elif filename.endswith((".txt", ".md")):
