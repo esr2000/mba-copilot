@@ -396,7 +396,7 @@ def extract_structured_chunks(file: UploadFile) -> list[dict[str, Any]]:
         #
         # return [{"text": chunk, "chunk_index": i} for i, chunk in enumerate(chunks)]
 
-        text = content.decode("utf-8-sig", errors="replace")
+      
     elif filename.endswith(".pdf"):
     # Extract per page so we can cite page numbers later
     pages = _extract_pdf_with_pages(content)
