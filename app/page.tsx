@@ -513,8 +513,8 @@ export default function Home() {
               className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors
                 ${
                   isDragActive
-                    ? 'border-columbia-500 bg-columbia-50'
-                    : 'border-slate-300 hover:border-columbia-400 hover:bg-slate-50'
+                    ? 'border-blue-500 bg-columbia-50'
+                    : 'border-slate-300 hover:border-blue-400 hover:bg-slate-50'
                 }
                 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
@@ -579,7 +579,7 @@ export default function Home() {
               className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-columbia-400 transition-colors group"
               style={{ backgroundColor: isResizing ? '#93c5fd' : 'transparent' }}
             >
-              <div className="absolute top-0 right-0 w-1 h-full group-hover:w-1 group-hover:bg-columbia-500" />
+              <div className="absolute top-0 right-0 w-1 h-full group-hover:w-1 group-hover:bg-blue-500" />
             </div>
           )}
         </aside>
@@ -653,7 +653,7 @@ export default function Home() {
           <div className="flex-1 overflow-y-auto p-4 sm:p-6">
             {messages.length === 0 ? (
               <div className="max-w-2xl mx-auto text-center py-8 sm:py-12">
-                <Sparkles className="w-12 h-12 mx-auto mb-4 text-columbia-500" />
+                <Sparkles className="w-12 h-12 mx-auto mb-4 text-blue-500" />
                 <h2 className="text-2xl font-semibold text-slate-800 mb-2">Welcome to MBA Copilot</h2>
                 <p className="text-slate-600 mb-8">
                   Upload your course materials and ask questions. I&apos;ll help you understand concepts, summarize
@@ -665,7 +665,7 @@ export default function Home() {
                     <button
                       key={i}
                       onClick={() => setInput(q)}
-                      className="p-3 text-left text-sm text-slate-600 bg-white border border-slate-200 rounded-lg hover:border-columbia-400 hover:bg-columbia-50 transition-colors"
+                      className="p-3 text-left text-sm text-slate-600 bg-white border border-slate-200 rounded-lg hover:border-blue-400 hover:bg-columbia-50 transition-colors"
                     >
                       {q}
                     </button>
@@ -703,14 +703,14 @@ export default function Home() {
                         <div className="mt-4 pt-4 border-t border-slate-200/70">
                           <button
                             onClick={() => toggleSources(i)}
-                            className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-columbia-600 transition-colors w-full"
+                            className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-blue-600 transition-colors w-full"
                           >
                             {expandedSources.has(i) ? (
-                              <ChevronDown className="w-4 h-4 text-columbia-500" />
+                              <ChevronDown className="w-4 h-4 text-blue-500" />
                             ) : (
-                              <ChevronRight className="w-4 h-4 text-columbia-500" />
+                              <ChevronRight className="w-4 h-4 text-blue-500" />
                             )}
-                            <span className="w-1 h-4 bg-columbia-500 rounded"></span>
+                            <span className="w-1 h-4 bg-blue-500 rounded"></span>
                             Sources Used ({msg.sources.length})
                           </button>
 
@@ -723,7 +723,7 @@ export default function Home() {
                                 >
                                   <div className="flex items-start justify-between mb-2 gap-3">
                                     <div className="flex items-center gap-2 min-w-0">
-                                      <FileText className="w-4 h-4 text-columbia-600 flex-shrink-0" />
+                                      <FileText className="w-4 h-4 text-blue-600 flex-shrink-0" />
                                       <span className="font-semibold text-slate-800 text-xs truncate">
                                         {source.filename}
                                       </span>
@@ -737,7 +737,7 @@ export default function Home() {
                                       )}
                                     </div>
 
-                                    <span className="text-xs font-bold text-columbia-700 bg-columbia-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                    <span className="text-xs font-bold text-columbia-700 bg-blue-100 px-2 py-0.5 rounded-full flex-shrink-0">
                                       {Math.round(source.score * 100)}%
                                     </span>
                                   </div>
@@ -797,7 +797,7 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={!input.trim() || isLoading}
-                className="px-4 py-3 bg-columbia-600 text-white rounded-xl hover:bg-columbia-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                className="px-4 py-3 bg-blue-600 text-white rounded-xl hover:bg-columbia-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 title="Send message"
               >
                 <Send className="w-5 h-5" />
