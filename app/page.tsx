@@ -717,7 +717,7 @@ export default function Home() {
 
                           {expandedSources.has(i) && (
                             <div className="space-y-2.5 mt-3">
-                              {msg.sources.map((source, j) => (
+                              {msg.sources.map((source: Source & {metadata?: { page_number?: number; slide_number?: number };}, j) => (
                                 <div
                                   key={j}
                                   className="bg-white border border-slate-200 rounded-xl p-3 hover:shadow-sm transition-shadow"
