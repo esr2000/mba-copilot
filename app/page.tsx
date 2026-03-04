@@ -26,6 +26,7 @@ import type {
   DocumentsResponse,
   Message,
   UploadResponse,
+  Source,
 } from './types';
 import { DEFAULT_SETTINGS } from './types';
 
