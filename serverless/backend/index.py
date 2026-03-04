@@ -395,21 +395,14 @@ async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     import asyncio
     from openai import AsyncOpenAI
 
-    async_client = AsyncOpenAI(
-        api_key=config.OPENAI_API_KEY,
-        base_url=config.OPENAI_BASE_URL if config.OPENAI_BASE_URL else None,
-    )
+    async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
+    """Generate embeddings sequentially (CBS gateway friendly)."""
+    embeddings: list[list[float]] = []
 
-    async def get_single_embedding(text: str) -> list[float]:
-        response = await async_client.embeddings.create(
-            model=config.EMBEDDING_MODEL,
-            input=text,
-            dimensions=config.EMBEDDING_DIMENSIONS,
-        )
-        return response.data[0].embedding
+    for text in texts:
+        embeddings.append(generate_embedding(text))
 
-    embeddings = await asyncio.gather(*[get_single_embedding(text) for text in texts])
-    return list(embeddings)
+    return embeddings
 
 
 # =============================================================================
