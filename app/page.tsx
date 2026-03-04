@@ -708,85 +708,99 @@ export default function Home() {
             ) : (
               <div className="max-w-3xl mx-auto space-y-6">
                 {messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div
-                      className={`max-w-[90%] sm:max-w-[85%] ${
-                        msg.role === 'user'
-                          ? 'bg-columbia-600 text-white'
-                          : 'bg-white border border-slate-200'
-                      } rounded-2xl px-4 py-3 shadow-sm`}
-                    >
-                      <div
-                        className={`markdown-content ${
-                          msg.role === 'user' ? 'text-white' : 'text-slate-700'
-                        }`}
-                      >
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
-                      </div>
-                      {msg.sources && msg.sources.length > 0 && (
-                        <div className="mt-4 pt-4 border-t border-slate-200">
-                          <button
-                            onClick={() => toggleSources(i)}
-                            className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-columbia-600 transition-colors w-full"
-                          >
-                            {expandedSources.has(i) ? (
-                              <ChevronDown className="w-4 h-4 text-columbia-500" />
-                            ) : (
-                              <ChevronRight className="w-4 h-4 text-columbia-500" />
-                            )}
-                            <span className="w-1 h-4 bg-columbia-500 rounded"></span>
-                            Sources Used ({msg.sources.length})
-                          </button>
-                          {expandedSources.has(i) && (
-                            <div className="space-y-2.5 mt-3">
-                              {msg.sources.map((source, j) => (
-                                <div
-                                  key={j}
-                                  className="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg p-3 hover:shadow-sm transition-shadow"
-                                >
-                                  <div className="flex items-start justify-between mb-2">
-                                    <div className="flex items-center gap-2 flex-1">
-                                      <FileText className="w-3.5 h-3.5 text-columbia-600 flex-shrink-0" />
-                                      <span className="font-semibold text-slate-800 text-xs">
-                                        {source.filename}
-                                      </span>
-                                    </div>
-                                    <span className="text-xs font-bold text-columbia-600 bg-columbia-100 px-2 py-0.5 rounded-full">
-                                      {Math.round(source.score * 100)}%
-                                    </span>
-                                  </div>
-                                  {source.text && (
-                                    <p className="text-xs text-slate-600 leading-relaxed italic border-l-2 border-columbia-300 pl-3 py-1 bg-white/50 rounded">
-                                      &ldquo;{source.text.length > 200 ? source.text.substring(0, 200) + '...' : source.text}&rdquo;
-                                    </p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+<div
+  key={i}
+  className={`flex items-end gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+>
+  {/* Avatar (venstre for assistant) */}
+  {msg.role !== 'user' && (
+    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-columbia-500 to-indigo-500 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+      <Sparkles className="w-4 h-4" />
+    </div>
+  )}
+
+  {/* Bubble */}
+  <div
+    className={`max-w-[92%] sm:max-w-[85%] rounded-2xl px-4 py-3 shadow-sm backdrop-blur
+      ${
+        msg.role === 'user'
+          ? 'bg-gradient-to-br from-columbia-600 to-indigo-600 text-white'
+          : 'bg-white/90 border border-slate-200'
+      }`}
+  >
+    <div
+      className={`markdown-content ${
+        msg.role === 'user' ? 'text-white' : 'text-slate-800'
+      }`}
+    >
+      <ReactMarkdown>{msg.content}</ReactMarkdown>
+    </div>
+
+    {/* Sources (uendret, men vi tweaker litt i neste steg) */}
+    {msg.sources && msg.sources.length > 0 && (
+      <div className="mt-4 pt-4 border-t border-slate-200/70">
+        <button
+          onClick={() => toggleSources(i)}
+          className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-columbia-600 transition-colors w-full"
+        >
+          {expandedSources.has(i) ? (
+            <ChevronDown className="w-4 h-4 text-columbia-500" />
+          ) : (
+            <ChevronRight className="w-4 h-4 text-columbia-500" />
+          )}
+          <span className="w-1 h-4 bg-columbia-500 rounded"></span>
+          Sources Used ({msg.sources.length})
+        </button>
+
+        {expandedSources.has(i) && (
+          <div className="space-y-2.5 mt-3">
+            {msg.sources.map((source, j) => (
+              <div
+                key={j}
+                className="bg-white border border-slate-200 rounded-xl p-3 hover:shadow-sm transition-shadow"
+              >
+                <div className="flex items-start justify-between mb-2 gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="w-4 h-4 text-columbia-600 flex-shrink-0" />
+                    <span className="font-semibold text-slate-800 text-xs truncate">
+                      {source.filename}
+                    </span>
+
+                    {/* Page/slide badge hvis finnes */}
+                    {(source.metadata?.page_number || source.metadata?.slide_number) && (
+                      <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                        {source.metadata?.page_number
+                          ? `p. ${source.metadata.page_number}`
+                          : `slide ${source.metadata.slide_number}`}
+                      </span>
+                    )}
                   </div>
-                ))}
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-white border border-slate-200 rounded-2xl px-4 py-3 shadow-sm">
-                      <div className="flex gap-1.5">
-                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
-                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
-                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
-                      </div>
-                    </div>
-                  </div>
+
+                  <span className="text-xs font-bold text-columbia-700 bg-columbia-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                    {Math.round(source.score * 100)}%
+                  </span>
+                </div>
+
+                {source.text && (
+                  <p className="text-xs text-slate-600 leading-relaxed border-l-2 border-columbia-300 pl-3 py-1 bg-slate-50 rounded">
+                    “{source.text.length > 220 ? source.text.substring(0, 220) + '…' : source.text}”
+                  </p>
                 )}
-                <div ref={messagesEndRef} />
               </div>
-            )}
+            ))}
           </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  {/* Avatar (høyre for user) */}
+  {msg.role === 'user' && (
+    <div className="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+      <span className="text-xs font-semibold">You</span>
+    </div>
+  )}
+</div>
 
           {/* Input */}
           <div className="border-t border-slate-200 bg-white p-4">
