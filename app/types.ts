@@ -11,6 +11,10 @@ export interface Source {
   score: number;
   filename: string;
   document_id: string;
+  metadata?: {
+    page_number?: number;
+    slide_number?: number;
+  };
 }
 
 export interface Document {
