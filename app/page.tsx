@@ -38,7 +38,7 @@ export default function Home() {
   const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarWidth, setSidebarWidth] = useState(320); // Default 320px (was w-80 = 20rem = 320px)
+  const [sidebarWidth, setSidebarWidth] = useState(320);
   const [isResizing, setIsResizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -48,7 +48,6 @@ export default function Home() {
   const folderInputRef = useRef<HTMLInputElement>(null);
 
   const tokenStats = useMemo(() => {
-    // Token counting with model context limits
     const MODEL_CONTEXT_LIMITS: Record<string, number> = {
       'gpt-4o-mini': 128000,
       'gpt-4o': 128000,
@@ -56,13 +55,10 @@ export default function Home() {
     };
 
     try {
-      // Use a simpler estimation: ~4 chars per token
       let totalTokens = 0;
 
-      // Count tokens in system prompt
       totalTokens += Math.ceil(settings.system_prompt.length / 4);
 
-      // Count tokens in messages
       messages.forEach((msg) => {
         totalTokens += Math.ceil(msg.content.length / 4) + 4;
         if (msg.sources) {
@@ -88,7 +84,6 @@ export default function Home() {
       if (res.ok) {
         const data: DocumentsResponse = await res.json();
         setDocuments(data.documents || []);
-        // Auto-select all documents by default
         setSelectedDocIds((data.documents || []).map((d) => d.id));
       }
     } catch (err) {
@@ -96,22 +91,18 @@ export default function Home() {
     }
   }, []);
 
-  // Load settings on mount
   useEffect(() => {
     setSettings(loadSettings());
   }, []);
 
-  // Fetch documents on mount
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments]);
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Clear error after 5 seconds
   useEffect(() => {
     if (error) {
       const timer = setTimeout(() => setError(null), 5000);
@@ -135,11 +126,12 @@ export default function Home() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: userMessage,
-          history: messages.map(({ role, content }) => ({ role, content })), // Only send role and content, not sources
+          history: messages.map(({ role, content }) => ({ role, content })),
           settings: settings,
-          document_ids: selectedDocIds.length > 0 && selectedDocIds.length < documents.length
-            ? selectedDocIds
-            : undefined, // undefined means search all
+          document_ids:
+            selectedDocIds.length > 0 && selectedDocIds.length < documents.length
+              ? selectedDocIds
+              : undefined,
         }),
       });
 
@@ -172,232 +164,213 @@ export default function Home() {
     }
   };
 
-  const processFiles = useCallback(async (files: File[]) => {
-    if (files.length === 0) return;
+  const processFiles = useCallback(
+    async (files: File[]) => {
+      if (files.length === 0) return;
 
-    setIsUploading(true);
-    setError(null);
+      setIsUploading(true);
+      setError(null);
 
-    const supportedExtensions = ['.pdf', '.docx', '.pptx', '.txt', '.md', '.csv'];
-    const validFiles = files.filter((f) =>
-      supportedExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
-    );
+      const supportedExtensions = ['.pdf', '.docx', '.pptx', '.txt', '.md', '.csv'];
+      const validFiles = files.filter((f) =>
+        supportedExtensions.some((ext) => f.name.toLowerCase().endsWith(ext))
+      );
 
-    if (validFiles.length === 0) {
-      setError('No supported files found. Please upload PDF, DOCX, PPTX, TXT, MD, or CSV files.');
-      setIsUploading(false);
-      return;
-    }
-
-    let successCount = 0;
-    let failCount = 0;
-
-    // Determine if we're uploading a folder (check first file for path info)
-    const firstFile = validFiles[0] as File & { webkitRelativePath?: string; path?: string };
-    const firstPath = firstFile.webkitRelativePath || firstFile.path || '';
-    const isFolder = firstPath.includes('/');
-    const folderName = isFolder ? firstPath.split('/')[0] : null;
-
-    // Size threshold for using blob upload (4MB)
-    const BLOB_UPLOAD_THRESHOLD = 4 * 1024 * 1024;
-    const blobUploadedFiles: string[] = []; // Track files uploaded via blob
-
-    for (const file of validFiles) {
-      try {
-        const fileWithPath = file as File & { webkitRelativePath?: string; path?: string };
-
-        // Get the full path (webkitRelativePath from folder input, path from drag/drop)
-        const fullPath = fileWithPath.webkitRelativePath || fileWithPath.path || '';
-
-        // Display progress
-        const displayName = folderName
-          ? `${folderName} (${successCount + failCount + 1}/${validFiles.length})`
-          : file.name;
-        setUploadStatus(`Uploading ${displayName}... Do not refresh the page.`);
-
-        // Prepare form data
-        const formData = new FormData();
-        formData.append('file', file);
-
-        // Build the final filename path
-        // Clean up the path by removing leading ./ and /
-        let finalFilename = fullPath || file.name;
-
-        // Remove leading ./ or / from the path
-        finalFilename = finalFilename.replace(/^\.\//, '').replace(/^\//, '');
-
-        // If after cleanup there's no path (just filename), use file.name
-        if (!finalFilename || finalFilename === file.name) {
-          finalFilename = file.name;
-        }
-
-        console.log('Uploading file:', file.name, 'with path:', finalFilename, 'size:', file.size);
-
-        let data: UploadResponse;
-
-        // Choose upload method based on file size
-        if (file.size > BLOB_UPLOAD_THRESHOLD) {
-          // Large files: Use client-side blob upload
-          console.log(`Using blob upload for ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-
-          const { upload } = await import('@vercel/blob/client');
-
-          const blob = await upload(finalFilename, file, {
-            access: 'public',
-            handleUploadUrl: '/api/upload-blob',
-            clientPayload: JSON.stringify({ originalFilename: finalFilename }),
-          });
-
-          console.log('Blob uploaded to:', blob.url);
-          console.log('Background processing started. File will appear in document list shortly.');
-
-          // Track this file for polling
-          blobUploadedFiles.push(finalFilename);
-
-          // The backend processing happens asynchronously in onUploadCompleted
-          // Return a temporary response and let the user know to wait
-          data = {
-            success: true,
-            document_id: `temp_${Date.now()}`, // Temporary ID, will refresh
-            filename: finalFilename,
-            chunks: 0,
-          };
-        } else {
-          // Small files: Direct upload
-          console.log(`Using direct upload for ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-
-          formData.append('filename', finalFilename);
-
-          const res = await fetch('/backend/upload', {
-            method: 'POST',
-            body: formData,
-          });
-
-          if (!res.ok) {
-            const errData = await res.json().catch(() => ({}));
-            throw new Error(errData.detail || 'Upload failed');
-          }
-
-          data = await res.json();
-        }
-
-        successCount++;
-
-        // Add the new document to selection
-        if (data.document_id && !data.document_id.startsWith('temp_')) {
-          setSelectedDocIds((prev) => [...prev, data.document_id]);
-        }
-      } catch (err) {
-        console.error(`Failed to upload ${file.name}:`, err);
-        failCount++;
-      }
-    }
-
-    // If we uploaded files via blob, poll until they appear in the document tree
-    if (blobUploadedFiles.length > 0) {
-      console.log('Waiting for blob-uploaded files to be processed...');
-      setUploadStatus('Processing large files...');
-
-      let pollAttempts = 0;
-      const maxPolls = 30; // Poll for up to 30 seconds
-
-      while (pollAttempts < maxPolls) {
-        await fetchDocuments();
-
-        // Check if all blob-uploaded files are now in the document list
-        const currentDocs = await fetch('/backend/documents').then(r => r.json());
-        const docFilenames = currentDocs.documents?.map((d: any) => d.filename) || [];
-
-        const allFilesProcessed = blobUploadedFiles.every(filename =>
-          docFilenames.includes(filename)
-        );
-
-        if (allFilesProcessed) {
-          console.log('All blob-uploaded files processed successfully');
-          break;
-        }
-
-        // Wait 1 second before next poll
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        pollAttempts++;
-      }
-
-      if (pollAttempts >= maxPolls) {
-        console.warn('Some blob-uploaded files may still be processing');
-      }
-    } else {
-      await fetchDocuments();
-    }
-
-    if (failCount === 0) {
-      const message = folderName
-        ? `✓ Uploaded folder "${folderName}" (${successCount} file${successCount !== 1 ? 's' : ''})`
-        : `✓ Uploaded ${successCount} file${successCount !== 1 ? 's' : ''}`;
-      setUploadStatus(message);
-    } else {
-      const message = folderName
-        ? `✓ Folder "${folderName}": ${successCount} uploaded, ✗ ${failCount} failed`
-        : `✓ ${successCount} uploaded, ✗ ${failCount} failed`;
-      setUploadStatus(message);
-    }
-
-    setIsUploading(false);
-    setTimeout(() => setUploadStatus(null), 3000);
-  }, [fetchDocuments]);
-
-  const onDrop = useCallback(async (acceptedFiles: File[], _fileRejections: unknown, event: any) => {
-    // Try to extract folder structure from drag event
-    const items = event?.dataTransfer?.items;
-    if (items) {
-      const filesWithPaths: Array<File & { path?: string }> = [];
-
-      // Helper to traverse directory entries recursively
-      const traverseFileTree = async (item: any, parentPath = ''): Promise<void> => {
-        return new Promise((resolve) => {
-          if (item.isFile) {
-            item.file((file: File) => {
-              const fileWithPath = file as File & { path?: string };
-              // Build the full path: parentPath already includes trailing slash if not empty
-              fileWithPath.path = parentPath + file.name;
-              filesWithPaths.push(fileWithPath);
-              resolve();
-            });
-          } else if (item.isDirectory) {
-            const dirReader = item.createReader();
-            dirReader.readEntries(async (entries: any[]) => {
-              // Add this directory to the path with trailing slash
-              const newPath = parentPath + item.name + '/';
-              for (const entry of entries) {
-                await traverseFileTree(entry, newPath);
-              }
-              resolve();
-            });
-          } else {
-            resolve();
-          }
-        });
-      };
-
-      // Process all dropped items
-      const promises = [];
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i].webkitGetAsEntry();
-        if (item) {
-          promises.push(traverseFileTree(item, ''));
-        }
-      }
-
-      await Promise.all(promises);
-
-      if (filesWithPaths.length > 0) {
-        await processFiles(filesWithPaths);
+      if (validFiles.length === 0) {
+        setError('No supported files found. Please upload PDF, DOCX, PPTX, TXT, MD, or CSV files.');
+        setIsUploading(false);
         return;
       }
-    }
 
-    // Fallback to regular files if no path info available
-    await processFiles(acceptedFiles);
-  }, [processFiles]);
+      let successCount = 0;
+      let failCount = 0;
+
+      const firstFile = validFiles[0] as File & { webkitRelativePath?: string; path?: string };
+      const firstPath = firstFile.webkitRelativePath || firstFile.path || '';
+      const isFolder = firstPath.includes('/');
+      const folderName = isFolder ? firstPath.split('/')[0] : null;
+
+      const BLOB_UPLOAD_THRESHOLD = 4 * 1024 * 1024;
+      const blobUploadedFiles: string[] = [];
+
+      for (const file of validFiles) {
+        try {
+          const fileWithPath = file as File & { webkitRelativePath?: string; path?: string };
+          const fullPath = fileWithPath.webkitRelativePath || fileWithPath.path || '';
+
+          const displayName = folderName
+            ? `${folderName} (${successCount + failCount + 1}/${validFiles.length})`
+            : file.name;
+          setUploadStatus(`Uploading ${displayName}... Do not refresh the page.`);
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          let finalFilename = fullPath || file.name;
+          finalFilename = finalFilename.replace(/^\.\//, '').replace(/^\//, '');
+
+          if (!finalFilename || finalFilename === file.name) {
+            finalFilename = file.name;
+          }
+
+          console.log('Uploading file:', file.name, 'with path:', finalFilename, 'size:', file.size);
+
+          let data: UploadResponse;
+
+          if (file.size > BLOB_UPLOAD_THRESHOLD) {
+            console.log(
+              `Using blob upload for ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
+            );
+
+            const { upload } = await import('@vercel/blob/client');
+
+            const blob = await upload(finalFilename, file, {
+              access: 'public',
+              handleUploadUrl: '/api/upload-blob',
+              clientPayload: JSON.stringify({ originalFilename: finalFilename }),
+            });
+
+            console.log('Blob uploaded to:', blob.url);
+            console.log('Background processing started. File will appear in document list shortly.');
+
+            blobUploadedFiles.push(finalFilename);
+
+            data = {
+              success: true,
+              document_id: `temp_${Date.now()}`,
+              filename: finalFilename,
+              chunks: 0,
+            };
+          } else {
+            console.log(
+              `Using direct upload for ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`
+            );
+
+            formData.append('filename', finalFilename);
+
+            const res = await fetch('/backend/upload', {
+              method: 'POST',
+              body: formData,
+            });
+
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({}));
+              throw new Error(errData.detail || 'Upload failed');
+            }
+
+            data = await res.json();
+          }
+
+          successCount++;
+
+          if (data.document_id && !data.document_id.startsWith('temp_')) {
+            setSelectedDocIds((prev) => [...prev, data.document_id]);
+          }
+        } catch (err) {
+          console.error(`Failed to upload ${file.name}:`, err);
+          failCount++;
+        }
+      }
+
+      if (blobUploadedFiles.length > 0) {
+        console.log('Waiting for blob-uploaded files to be processed...');
+        setUploadStatus('Processing large files...');
+
+        let pollAttempts = 0;
+        const maxPolls = 30;
+
+        while (pollAttempts < maxPolls) {
+          await fetchDocuments();
+
+          const currentDocs = await fetch('/backend/documents').then((r) => r.json());
+          const docFilenames = currentDocs.documents?.map((d: any) => d.filename) || [];
+
+          const allFilesProcessed = blobUploadedFiles.every((filename) => docFilenames.includes(filename));
+
+          if (allFilesProcessed) {
+            console.log('All blob-uploaded files processed successfully');
+            break;
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          pollAttempts++;
+        }
+
+        if (pollAttempts >= maxPolls) {
+          console.warn('Some blob-uploaded files may still be processing');
+        }
+      } else {
+        await fetchDocuments();
+      }
+
+      if (failCount === 0) {
+        const message = folderName
+          ? `✓ Uploaded folder "${folderName}" (${successCount} file${successCount !== 1 ? 's' : ''})`
+          : `✓ Uploaded ${successCount} file${successCount !== 1 ? 's' : ''}`;
+        setUploadStatus(message);
+      } else {
+        const message = folderName
+          ? `✓ Folder "${folderName}": ${successCount} uploaded, ✗ ${failCount} failed`
+          : `✓ ${successCount} uploaded, ✗ ${failCount} failed`;
+        setUploadStatus(message);
+      }
+
+      setIsUploading(false);
+      setTimeout(() => setUploadStatus(null), 3000);
+    },
+    [fetchDocuments]
+  );
+
+  const onDrop = useCallback(
+    async (acceptedFiles: File[], _fileRejections: unknown, event: any) => {
+      const items = event?.dataTransfer?.items;
+      if (items) {
+        const filesWithPaths: Array<File & { path?: string }> = [];
+
+        const traverseFileTree = async (item: any, parentPath = ''): Promise<void> => {
+          return new Promise((resolve) => {
+            if (item.isFile) {
+              item.file((file: File) => {
+                const fileWithPath = file as File & { path?: string };
+                fileWithPath.path = parentPath + file.name;
+                filesWithPaths.push(fileWithPath);
+                resolve();
+              });
+            } else if (item.isDirectory) {
+              const dirReader = item.createReader();
+              dirReader.readEntries(async (entries: any[]) => {
+                const newPath = parentPath + item.name + '/';
+                for (const entry of entries) {
+                  await traverseFileTree(entry, newPath);
+                }
+                resolve();
+              });
+            } else {
+              resolve();
+            }
+          });
+        };
+
+        const promises = [];
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i].webkitGetAsEntry();
+          if (item) {
+            promises.push(traverseFileTree(item, ''));
+          }
+        }
+
+        await Promise.all(promises);
+
+        if (filesWithPaths.length > 0) {
+          await processFiles(filesWithPaths);
+          return;
+        }
+      }
+
+      await processFiles(acceptedFiles);
+    },
+    [processFiles]
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -417,7 +390,6 @@ export default function Home() {
     if (files) {
       await processFiles(Array.from(files));
     }
-    // Reset input so same folder can be selected again
     e.target.value = '';
   };
 
@@ -440,9 +412,10 @@ export default function Home() {
     'What are the practical applications mentioned?',
   ];
 
-  const searchScope = selectedDocIds.length === 0 || selectedDocIds.length === documents.length
-    ? 'all documents'
-    : `${selectedDocIds.length} selected document${selectedDocIds.length !== 1 ? 's' : ''}`;
+  const searchScope =
+    selectedDocIds.length === 0 || selectedDocIds.length === documents.length
+      ? 'all documents'
+      : `${selectedDocIds.length} selected document${selectedDocIds.length !== 1 ? 's' : ''}`;
 
   const handleNewChat = () => {
     if (messages.length > 0 && !confirm('Start a new chat? Current conversation will be cleared.')) {
@@ -472,20 +445,15 @@ export default function Home() {
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
-
-      // Set min width to 240px and max width to 600px
       const newWidth = Math.min(Math.max(e.clientX, 240), 600);
       setSidebarWidth(newWidth);
     };
 
-    const handleMouseUp = () => {
-      setIsResizing(false);
-    };
+    const handleMouseUp = () => setIsResizing(false);
 
     if (isResizing) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
-      // Prevent text selection while resizing
       document.body.style.userSelect = 'none';
       document.body.style.cursor = 'col-resize';
     }
@@ -525,7 +493,7 @@ export default function Home() {
           className="bg-white border-r border-slate-200 flex flex-col overflow-hidden flex-shrink-0 relative"
           style={{
             width: sidebarOpen ? `${sidebarWidth}px` : '0px',
-            transition: isResizing ? 'none' : 'width 0.3s'
+            transition: isResizing ? 'none' : 'width 0.3s',
           }}
         >
           <div className="p-4 border-b border-slate-200">
@@ -543,14 +511,16 @@ export default function Home() {
             <div
               {...getRootProps()}
               className={`border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors
-                ${isDragActive ? 'border-columbia-500 bg-columbia-50' : 'border-slate-300 hover:border-columbia-400 hover:bg-slate-50'}
+                ${
+                  isDragActive
+                    ? 'border-columbia-500 bg-columbia-50'
+                    : 'border-slate-300 hover:border-columbia-400 hover:bg-slate-50'
+                }
                 ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               <input {...getInputProps()} />
               <Upload className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-              <p className="text-sm text-slate-600">
-                {isDragActive ? 'Drop files here' : 'Drag & drop files'}
-              </p>
+              <p className="text-sm text-slate-600">{isDragActive ? 'Drop files here' : 'Drag & drop files'}</p>
               <p className="text-xs text-slate-400 mt-1">PDF, DOCX, PPTX, TXT, MD, CSV</p>
             </div>
 
@@ -591,9 +561,7 @@ export default function Home() {
           {/* Document Tree */}
           <div className="flex-1 overflow-y-auto p-4">
             {documents.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-4">
-                No documents yet. Upload some to get started!
-              </p>
+              <p className="text-sm text-slate-400 text-center py-4">No documents yet. Upload some to get started!</p>
             ) : (
               <DocumentTree
                 documents={documents}
@@ -609,9 +577,7 @@ export default function Home() {
             <div
               onMouseDown={handleMouseDown}
               className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-columbia-400 transition-colors group"
-              style={{
-                backgroundColor: isResizing ? '#93c5fd' : 'transparent'
-              }}
+              style={{ backgroundColor: isResizing ? '#93c5fd' : 'transparent' }}
             >
               <div className="absolute top-0 right-0 w-1 h-full group-hover:w-1 group-hover:bg-columbia-500" />
             </div>
@@ -629,12 +595,12 @@ export default function Home() {
             >
               <Menu className="w-5 h-5 text-slate-600" />
             </button>
+
             <div className="flex-1">
               <h1 className="text-xl font-semibold text-slate-800">MBA Copilot</h1>
               <div className="flex items-center gap-3">
-                <p className="text-sm text-slate-500 hidden sm:block">
-                  Searching {searchScope}
-                </p>
+                <p className="text-sm text-slate-500 hidden sm:block">Searching {searchScope}</p>
+
                 {messages.length > 0 && (
                   <div className="hidden sm:flex items-center gap-2">
                     <div className="w-32 h-2 bg-slate-200 rounded-full overflow-hidden">
@@ -665,6 +631,7 @@ export default function Home() {
                 )}
               </div>
             </div>
+
             <button
               onClick={handleNewChat}
               className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -672,6 +639,7 @@ export default function Home() {
             >
               <MessageSquarePlus className="w-5 h-5 text-slate-600" />
             </button>
+
             <button
               onClick={() => setSettingsOpen(true)}
               className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
@@ -686,13 +654,12 @@ export default function Home() {
             {messages.length === 0 ? (
               <div className="max-w-2xl mx-auto text-center py-8 sm:py-12">
                 <Sparkles className="w-12 h-12 mx-auto mb-4 text-columbia-500" />
-                <h2 className="text-2xl font-semibold text-slate-800 mb-2">
-                  Welcome to MBA Copilot
-                </h2>
+                <h2 className="text-2xl font-semibold text-slate-800 mb-2">Welcome to MBA Copilot</h2>
                 <p className="text-slate-600 mb-8">
-                  Upload your course materials and ask questions. I&apos;ll help you understand
-                  concepts, summarize readings, and prepare for discussions.
+                  Upload your course materials and ask questions. I&apos;ll help you understand concepts, summarize
+                  readings, and prepare for discussions.
                 </p>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {suggestedQuestions.map((q, i) => (
                     <button
@@ -708,111 +675,121 @@ export default function Home() {
             ) : (
               <div className="max-w-3xl mx-auto space-y-6">
                 {messages.map((msg, i) => (
-<div
-  key={i}
-  className={`flex items-end gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
->
-  {/* Avatar (venstre for assistant) */}
-  {msg.role !== 'user' && (
-    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-columbia-500 to-indigo-500 flex items-center justify-center text-white shadow-sm flex-shrink-0">
-      <Sparkles className="w-4 h-4" />
-    </div>
-  )}
+                  <div
+                    key={i}
+                    className={`flex items-end gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
+                    {/* Avatar (venstre for assistant) */}
+                    {msg.role !== 'user' && (
+                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-columbia-500 to-indigo-500 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+                        <Sparkles className="w-4 h-4" />
+                      </div>
+                    )}
 
-  {/* Bubble */}
-  <div
-    className={`max-w-[92%] sm:max-w-[85%] rounded-2xl px-4 py-3 shadow-sm backdrop-blur
-      ${
-        msg.role === 'user'
-          ? 'bg-gradient-to-br from-columbia-600 to-indigo-600 text-white'
-          : 'bg-white/90 border border-slate-200'
-      }`}
-  >
-    <div
-      className={`markdown-content ${
-        msg.role === 'user' ? 'text-white' : 'text-slate-800'
-      }`}
-    >
-      <ReactMarkdown>{msg.content}</ReactMarkdown>
-    </div>
+                    {/* Bubble */}
+                    <div
+                      className={`max-w-[92%] sm:max-w-[85%] rounded-2xl px-4 py-3 shadow-sm backdrop-blur
+                        ${
+                          msg.role === 'user'
+                            ? 'bg-gradient-to-br from-columbia-600 to-indigo-600 text-white'
+                            : 'bg-white/90 border border-slate-200'
+                        }`}
+                    >
+                      <div className={`markdown-content ${msg.role === 'user' ? 'text-white' : 'text-slate-800'}`}>
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
 
-    {/* Sources (uendret, men vi tweaker litt i neste steg) */}
-    {msg.sources && msg.sources.length > 0 && (
-      <div className="mt-4 pt-4 border-t border-slate-200/70">
-        <button
-          onClick={() => toggleSources(i)}
-          className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-columbia-600 transition-colors w-full"
-        >
-          {expandedSources.has(i) ? (
-            <ChevronDown className="w-4 h-4 text-columbia-500" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-columbia-500" />
-          )}
-          <span className="w-1 h-4 bg-columbia-500 rounded"></span>
-          Sources Used ({msg.sources.length})
-        </button>
+                      {msg.sources && msg.sources.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-200/70">
+                          <button
+                            onClick={() => toggleSources(i)}
+                            className="flex items-center gap-2 text-xs font-semibold text-slate-700 uppercase tracking-wide hover:text-columbia-600 transition-colors w-full"
+                          >
+                            {expandedSources.has(i) ? (
+                              <ChevronDown className="w-4 h-4 text-columbia-500" />
+                            ) : (
+                              <ChevronRight className="w-4 h-4 text-columbia-500" />
+                            )}
+                            <span className="w-1 h-4 bg-columbia-500 rounded"></span>
+                            Sources Used ({msg.sources.length})
+                          </button>
 
-        {expandedSources.has(i) && (
-          <div className="space-y-2.5 mt-3">
-            {msg.sources.map((source, j) => (
-              <div
-                key={j}
-                className="bg-white border border-slate-200 rounded-xl p-3 hover:shadow-sm transition-shadow"
-              >
-                <div className="flex items-start justify-between mb-2 gap-3">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <FileText className="w-4 h-4 text-columbia-600 flex-shrink-0" />
-                    <span className="font-semibold text-slate-800 text-xs truncate">
-                      {source.filename}
-                    </span>
+                          {expandedSources.has(i) && (
+                            <div className="space-y-2.5 mt-3">
+                              {msg.sources.map((source, j) => (
+                                <div
+                                  key={j}
+                                  className="bg-white border border-slate-200 rounded-xl p-3 hover:shadow-sm transition-shadow"
+                                >
+                                  <div className="flex items-start justify-between mb-2 gap-3">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                      <FileText className="w-4 h-4 text-columbia-600 flex-shrink-0" />
+                                      <span className="font-semibold text-slate-800 text-xs truncate">
+                                        {source.filename}
+                                      </span>
 
-                    {/* Page/slide badge hvis finnes */}
-                    {(source.metadata?.page_number || source.metadata?.slide_number) && (
-                      <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">
-                        {source.metadata?.page_number
-                          ? `p. ${source.metadata.page_number}`
-                          : `slide ${source.metadata.slide_number}`}
-                      </span>
+                                      {(source.metadata?.page_number || source.metadata?.slide_number) && (
+                                        <span className="text-[11px] text-slate-600 bg-slate-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                          {source.metadata?.page_number
+                                            ? `p. ${source.metadata.page_number}`
+                                            : `slide ${source.metadata.slide_number}`}
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <span className="text-xs font-bold text-columbia-700 bg-columbia-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                      {Math.round(source.score * 100)}%
+                                    </span>
+                                  </div>
+
+                                  {source.text && (
+                                    <p className="text-xs text-slate-600 leading-relaxed border-l-2 border-columbia-300 pl-3 py-1 bg-slate-50 rounded">
+                                      “{source.text.length > 220 ? source.text.substring(0, 220) + '…' : source.text}”
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Avatar (høyre for user) */}
+                    {msg.role === 'user' && (
+                      <div className="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-white shadow-sm flex-shrink-0">
+                        <span className="text-xs font-semibold">You</span>
+                      </div>
                     )}
                   </div>
+                ))}
 
-                  <span className="text-xs font-bold text-columbia-700 bg-columbia-100 px-2 py-0.5 rounded-full flex-shrink-0">
-                    {Math.round(source.score * 100)}%
-                  </span>
-                </div>
-
-                {source.text && (
-                  <p className="text-xs text-slate-600 leading-relaxed border-l-2 border-columbia-300 pl-3 py-1 bg-slate-50 rounded">
-                    “{source.text.length > 220 ? source.text.substring(0, 220) + '…' : source.text}”
-                  </p>
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="bg-white/90 backdrop-blur border border-slate-200 rounded-2xl px-4 py-3 shadow-sm">
+                      <div className="flex gap-1.5">
+                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
+                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
+                        <div className="w-2 h-2 bg-slate-400 rounded-full loading-dot" />
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    )}
-  </div>
 
-  {/* Avatar (høyre for user) */}
-  {msg.role === 'user' && (
-    <div className="w-9 h-9 rounded-full bg-slate-900 flex items-center justify-center text-white shadow-sm flex-shrink-0">
-      <span className="text-xs font-semibold">You</span>
-    </div>
-  )}
-</div>
+                <div ref={messagesEndRef} />
+              </div>
+            )}
+          </div>
 
           {/* Input */}
-          <div className="border-t border-slate-200 bg-white p-4">
+          <div className="border-t border-slate-200 bg-white/90 backdrop-blur p-4 sticky bottom-0">
             <form onSubmit={handleSubmit} className="max-w-3xl mx-auto flex gap-3">
               <input
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={
-                  documents.length === 0
-                    ? 'Upload documents to get started...'
-                    : `Ask about ${searchScope}...`
+                  documents.length === 0 ? 'Upload documents to get started...' : `Ask about ${searchScope}...`
                 }
                 className="flex-1 px-4 py-3 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-columbia-500 focus:border-transparent transition-shadow"
                 disabled={isLoading}
