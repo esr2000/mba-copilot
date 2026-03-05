@@ -378,7 +378,6 @@ def generate_document_id() -> str:
 # Embeddings
 # =============================================================================
 
-
 def generate_embedding(text: str) -> list[float]:
     """Generate embedding for a single text string."""
     client = get_openai()
@@ -393,12 +392,9 @@ def generate_embedding(text: str) -> list[float]:
 async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     """Generate embeddings sequentially (CBS gateway friendly)."""
     embeddings: list[list[float]] = []
-
     for text in texts:
         embeddings.append(generate_embedding(text))
-
     return embeddings
-
 
 # =============================================================================
 # Pinecone Operations
