@@ -9,6 +9,7 @@ import csv
 import io
 import os
 import random
+import re
 import string
 import time
 from datetime import datetime, timezone
@@ -62,13 +63,14 @@ class Config:
     PINECONE_INDEX = os.environ.get("PINECONE_INDEX", "mba-copilot")
 
     # RAG Settings (token-based)
-    CHUNK_TOKENS_DOCS = 2000
-    CHUNK_OVERLAP_TOKENS_DOCS = 200
+    # Larger chunks to keep more context together
+    CHUNK_TOKENS_DOCS = 800
+    CHUNK_OVERLAP_TOKENS_DOCS = 150
 
     # Retrieval settings
-    RETRIEVAL_TOP_K = 20
-    CONTEXT_MAX_CHUNKS = 8
-    MIN_SCORE = 0.25
+    RETRIEVAL_TOP_K = 20  # Retrieve more candidates
+    CONTEXT_MAX_CHUNKS = 8  # Pass more context to LLM
+    MIN_SCORE = 0.25  # Lower threshold to be more inclusive
 
 
 config = Config()
@@ -124,6 +126,7 @@ def num_tokens(text: str, model: str | None = None) -> int:
     try:
         enc = tiktoken.encoding_for_model(encoding_model)
     except KeyError:
+        # Fallback to cl100k_base for unknown models
         enc = tiktoken.get_encoding("cl100k_base")
     return len(enc.encode(text))
 
@@ -150,6 +153,7 @@ def chunk_by_tokens(
 
     tokens = enc.encode(text)
 
+    # If text fits in one chunk, return as-is
     if len(tokens) <= chunk_tokens:
         return [text]
 
@@ -165,6 +169,7 @@ def chunk_by_tokens(
         if end >= len(tokens):
             break
 
+        # Move start forward, accounting for overlap
         start = max(0, end - overlap_tokens)
 
     return chunks
@@ -176,11 +181,16 @@ def chunk_by_tokens(
 
 
 def _extract_pdf_text_best_fidelity(content: bytes) -> str:
-    """Extract text from PDF with best fidelity using block coordinates."""
+    """Extract text from PDF with best fidelity using block coordinates.
+
+    - get_text("blocks") -> includes bounding boxes
+    - sort blocks by y then x with a small y tolerance to keep lines aligned
+    - preserve page boundaries
+    """
     doc = fitz.open(stream=content, filetype="pdf")
     try:
         pages_out: list[str] = []
-        y_tol = 3.0
+        y_tol = 3.0  # points
 
         for page in doc:
             blocks: Any = page.get_text("blocks")
@@ -234,6 +244,7 @@ def _extract_pptx_text(content: bytes) -> str:
         parts: list[str] = [f"--- Slide {si} ---"]
 
         for shape in slide.shapes:
+            # python-pptx is dynamic; stubs are conservative.
             s = cast(Any, shape)
 
             if hasattr(s, "text_frame") and s.text_frame:
@@ -247,6 +258,7 @@ def _extract_pptx_text(content: bytes) -> str:
                     if line.strip():
                         parts.append(line)
 
+        # Speaker notes
         try:
             notes_slide = slide.notes_slide
             if notes_slide and notes_slide.notes_text_frame:
@@ -261,12 +273,36 @@ def _extract_pptx_text(content: bytes) -> str:
     return "\n\n".join(s for s in slides_out if s).strip()
 
 
+def _extract_csv_structured(content: bytes) -> list[dict[str, Any]]:
+    """Extract CSV as row-based chunks with column headers.
+
+    Each row becomes a chunk formatted as: "ColA: valA | ColB: valB | ..."
+    """
+    text = content.decode("utf-8-sig", errors="replace")
+    reader = csv.DictReader(io.StringIO(text))
+
+    rows: list[dict[str, Any]] = []
+    for idx, row in enumerate(reader, start=1):
+        # Format: "ColA: valA | ColB: valB"
+        chunk_text = " | ".join(f"{k}: {v}" for k, v in row.items() if v and v.strip())
+        if chunk_text.strip():
+            rows.append({
+                "row_number": idx,
+                "text": chunk_text,
+            })
+
+    return rows
+
+
 def _extract_pdf_with_pages(content: bytes) -> list[dict[str, Any]]:
-    """Extract PDF with page-level metadata: page_number, text."""
+    """Extract PDF with page-level metadata.
+
+    Returns list of dicts with: page_number, text
+    """
     doc = fitz.open(stream=content, filetype="pdf")
     try:
         pages: list[dict[str, Any]] = []
-        y_tol = 3.0
+        y_tol = 3.0  # points
 
         for page_num, page in enumerate(doc, start=1):
             blocks: Any = page.get_text("blocks")
@@ -285,7 +321,10 @@ def _extract_pdf_with_pages(content: bytes) -> list[dict[str, Any]]:
 
             page_text = "\n".join(str(b[4]).rstrip() for b in clean_blocks).strip()
             if page_text:
-                pages.append({"page_number": page_num, "text": page_text})
+                pages.append({
+                    "page_number": page_num,
+                    "text": page_text,
+                })
 
         return pages
     finally:
@@ -295,8 +334,8 @@ def _extract_pdf_with_pages(content: bytes) -> list[dict[str, Any]]:
 def extract_structured_chunks(file: UploadFile) -> list[dict[str, Any]]:
     """Extract file into structured chunks with metadata.
 
-    - For PDF: chunks include page_number.
-    - For others: simple token-based chunking.
+    Simple token-based chunking for all file types.
+    Returns list of dicts with 'text' and 'chunk_index'.
     """
     content = file.file.read()
     try:
@@ -309,57 +348,68 @@ def extract_structured_chunks(file: UploadFile) -> list[dict[str, Any]]:
 
     filename = file.filename.lower()
 
-    # PPTX
+    # Extract text based on file type
     if filename.endswith(".pptx"):
         text = _extract_pptx_text(content)
-
-    # CSV (as plain text)
     elif filename.endswith(".csv"):
+        # For CSV, just treat as plain text for now
+        # TODO: Revisit row-based chunking with batching when we have more time
+        #
+        # # For CSV: Use row-based chunking with batching to balance context and performance
+        # # Convert each row to "Col1: val1 | Col2: val2" format, then batch rows together
+        # text_content = content.decode("utf-8-sig", errors="replace")
+        # reader = csv.DictReader(io.StringIO(text_content))
+        #
+        # row_texts: list[str] = []
+        # for row in reader:
+        #     # Format: "ColA: valA | ColB: valB"
+        #     row_text = " | ".join(f"{k}: {v}" for k, v in row.items() if v and v.strip())
+        #     if row_text.strip():
+        #         row_texts.append(row_text)
+        #
+        # if not row_texts:
+        #     return []
+        #
+        # # Batch rows into chunks (target ~400-500 tokens per chunk for good retrieval)
+        # # Average row is ~50-100 tokens, so batch 5-10 rows per chunk
+        # chunks: list[str] = []
+        # current_chunk: list[str] = []
+        # current_tokens = 0
+        # target_tokens = 450  # Sweet spot for retrieval
+        #
+        # for row_text in row_texts:
+        #     row_tokens = num_tokens(row_text)
+        #
+        #     if current_tokens + row_tokens > target_tokens and current_chunk:
+        #         # Chunk is full, save it and start new one
+        #         chunks.append("\n".join(current_chunk))
+        #         current_chunk = [row_text]
+        #         current_tokens = row_tokens
+        #     else:
+        #         # Add to current chunk
+        #         current_chunk.append(row_text)
+        #         current_tokens += row_tokens
+        #
+        # # Don't forget the last chunk
+        # if current_chunk:
+        #     chunks.append("\n".join(current_chunk))
+        #
+        # return [{"text": chunk, "chunk_index": i} for i, chunk in enumerate(chunks)]
+
         text = content.decode("utf-8-sig", errors="replace")
-
-    # PDF (per-page, keep page_number)
     elif filename.endswith(".pdf"):
-        pages = _extract_pdf_with_pages(content)
-        if not pages:
-            return []
-
-        structured_chunks: list[dict[str, Any]] = []
-        for p in pages:
-            page_text = str(p.get("text", "")).strip()
-            if not page_text:
-                continue
-
-            page_chunks = chunk_by_tokens(
-                page_text,
-                chunk_tokens=config.CHUNK_TOKENS_DOCS,
-                overlap_tokens=config.CHUNK_OVERLAP_TOKENS_DOCS,
-            )
-
-            for ch in page_chunks:
-                structured_chunks.append(
-                    {
-                        "text": ch,
-                        "chunk_index": len(structured_chunks),
-                        "page_number": int(p.get("page_number", 0)),
-                    }
-                )
-
-        return structured_chunks
-
-    # DOCX
+        text = _extract_pdf_text_best_fidelity(content)
     elif filename.endswith(".docx"):
         text = _extract_docx_text(content)
-
-    # TXT/MD
     elif filename.endswith((".txt", ".md")):
         text = content.decode("utf-8-sig", errors="replace")
-
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported file type: {filename}")
 
     if not text.strip():
         return []
 
+    # Chunk everything with token-based chunking
     text_chunks = chunk_by_tokens(
         text,
         chunk_tokens=config.CHUNK_TOKENS_DOCS,
@@ -378,23 +428,51 @@ def generate_document_id() -> str:
 # Embeddings
 # =============================================================================
 
+
 def generate_embedding(text: str) -> list[float]:
     """Generate embedding for a single text string."""
     client = get_openai()
     response = client.embeddings.create(
-        model=config.EMBEDDING_MODEL,
-        input=text,
-        dimensions=config.EMBEDDING_DIMENSIONS,
+        model=config.EMBEDDING_MODEL, input=text, dimensions=config.EMBEDDING_DIMENSIONS
     )
     return response.data[0].embedding
 
 
 async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings sequentially (CBS gateway friendly)."""
-    embeddings: list[list[float]] = []
-    for text in texts:
-        embeddings.append(generate_embedding(text))
-    return embeddings
+    """Generate embeddings for multiple texts using parallel individual requests.
+
+    Note: CBS endpoint blocks batch requests via Cloudflare, so we send
+    individual requests in parallel instead.
+
+    TODO: Revert to batch API when CBS IT enables batch embedding requests.
+    Original implementation:
+        client = get_openai()
+        response = client.embeddings.create(
+            model=config.EMBEDDING_MODEL, input=texts, dimensions=config.EMBEDDING_DIMENSIONS
+        )
+        return [d.embedding for d in response.data]
+    """
+    import asyncio
+
+    from openai import AsyncOpenAI
+
+    # Create async client with same config as sync client
+    async_client = AsyncOpenAI(
+        api_key=config.OPENAI_API_KEY,
+        base_url=config.OPENAI_BASE_URL if config.OPENAI_BASE_URL else None,
+    )
+
+    async def get_single_embedding(text: str) -> list[float]:
+        """Get embedding for a single text."""
+        response = await async_client.embeddings.create(
+            model=config.EMBEDDING_MODEL, input=text, dimensions=config.EMBEDDING_DIMENSIONS
+        )
+        return response.data[0].embedding
+
+    # Run all requests in parallel
+    embeddings = await asyncio.gather(*[get_single_embedding(text) for text in texts])
+    return list(embeddings)
+
 
 # =============================================================================
 # Pinecone Operations
@@ -408,7 +486,9 @@ def store_chunks(chunks: list[dict[str, Any]]) -> None:
     batch_size = 100
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i : i + batch_size]
-        vectors = [{"id": c["id"], "values": c["embedding"], "metadata": c["metadata"]} for c in batch]
+        vectors = [
+            {"id": c["id"], "values": c["embedding"], "metadata": c["metadata"]} for c in batch
+        ]
         index.upsert(vectors=vectors)
 
 
@@ -451,9 +531,14 @@ def delete_document(document_id: str) -> None:
 
 
 def list_documents() -> list[dict[str, Any]]:
-    """Best-effort listing using the 'is_first_chunk' marker."""
+    """Best-effort listing using the 'is_first_chunk' marker.
+
+    NOTE: This depends on Pinecone supporting metadata filtering.
+    """
     index = get_pinecone_index()
 
+    # Reduce top_k to avoid timeouts - 100 documents should be enough
+    # for most use cases and is much faster than 1000
     results = index.query(
         vector=[0.0] * config.EMBEDDING_DIMENSIONS,
         top_k=100,
@@ -494,6 +579,7 @@ def generate_answer(
     prompt = system_prompt or "You are a helpful AI assistant."
     model = chat_model or config.CHAT_MODEL
 
+    # Build messages list with proper typing
     messages: list[dict[str, str]] = [{"role": "system", "content": prompt}]
 
     if context:
@@ -518,15 +604,18 @@ def generate_answer(
             }
         )
 
+    # Include full history - OpenAI API handles token limits gracefully
+    # by truncating from the beginning if needed
     if history:
         for msg in history:
-            role = str(msg.get("role", ""))
-            content = str(msg.get("content", ""))
+            role = str(msg["role"])
+            content = str(msg["content"])
             if role in ("user", "assistant", "system"):
                 messages.append({"role": role, "content": content})
 
     messages.append({"role": "user", "content": question})
 
+    # Cast to the proper type for OpenAI API
     response = client.chat.completions.create(
         model=model,
         messages=cast("list[ChatCompletionMessageParam]", messages),
@@ -542,15 +631,22 @@ def generate_answer(
 
 
 class ChatSettings(BaseModel):
-    """Settings for chat completion and RAG retrieval."""
+    """Settings for chat completion and RAG retrieval.
+
+    Note: top_k is now just for backwards compatibility.
+    The system retrieves config.RETRIEVAL_TOP_K candidates and passes
+    the best config.CONTEXT_MAX_CHUNKS to the LLM.
+    """
+
     chat_model: str = "gpt-4o-mini"
-    top_k: int = 15  # backwards compat
+    top_k: int = 15  # Kept for backwards compatibility
     min_score: float = 0.3
     system_prompt: str = "You are a helpful AI assistant."
 
 
 class ChatRequest(BaseModel):
     """Request model for chat endpoint."""
+
     message: str
     history: list[dict[str, Any]] | None = None
     settings: ChatSettings | None = None
@@ -559,6 +655,7 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     """Response model for chat endpoint."""
+
     answer: str
     sources: list[dict[str, Any]]
 
@@ -576,36 +673,29 @@ async def chat(request: ChatRequest) -> ChatResponse:
 
         query_embedding = generate_embedding(request.message)
 
+        # Retrieve more candidates than we'll use
         similar = query_similar(
             query_embedding,
             top_k=config.RETRIEVAL_TOP_K,
             document_ids=request.document_ids,
         )
 
+        # Filter by minimum score
         relevant = [c for c in similar if float(c.get("score", 0.0)) >= settings.min_score]
 
+        # If we have results, limit to best N for context
         if relevant:
             context_chunks = relevant[: config.CONTEXT_MAX_CHUNKS]
         elif similar:
+            # Fallback: if min_score filtered everything, use top results anyway
             context_chunks = similar[: max(3, config.CONTEXT_MAX_CHUNKS // 2)]
         else:
             context_chunks = []
 
-        def _format_source_label(c: dict[str, Any]) -> str:
-            md = c.get("metadata") or {}
-            fn = c.get("filename") or "unknown"
-            page = md.get("page_number")
-            slide = md.get("slide_number")
-
-            if page:
-                return f"{fn} (p. {page})"
-            if slide:
-                return f"{fn} (slide {slide})"
-            return fn
-
+        # Build context
         if context_chunks:
             context = "\n\n---\n\n".join(
-                [f"[Source: {_format_source_label(c)}]\n{c['text']}" for c in context_chunks]
+                [f"[Source: {c['filename']}]\n{c['text']}" for c in context_chunks]
             )
         else:
             context = ""
@@ -618,6 +708,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             system_prompt=settings.system_prompt,
         )
 
+        # Return sources from context_chunks (what was actually used)
         sources = [
             {
                 "text": c["text"],
@@ -637,6 +728,77 @@ async def chat(request: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
+class _FileObj:
+    """Lightweight file-like object compatible with extract_structured_chunks."""
+
+    def __init__(self, content: bytes, filename: str) -> None:
+        self.file = io.BytesIO(content)
+        self.filename = filename
+        self.content_type = "application/octet-stream"
+
+
+def _make_file_obj(content: bytes, filename: str) -> _FileObj:
+    return _FileObj(content, filename)
+
+
+async def _process_file(file_obj: Any, display_filename: str) -> dict[str, Any]:
+    """Shared file processing: extract chunks, generate embeddings, store in Pinecone."""
+    if not config.OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENAI_API_KEY not configured. Please set environment variables in Vercel dashboard.",
+        )
+    if not config.PINECONE_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="PINECONE_API_KEY not configured. Please set environment variables in Vercel dashboard.",
+        )
+
+    structured_chunks = extract_structured_chunks(file_obj)
+    if not structured_chunks:
+        raise HTTPException(status_code=400, detail="No content to process")
+
+    # Check if document with same filename already exists and delete it
+    existing_docs = list_documents()
+    for doc in existing_docs:
+        if doc.get("filename") == display_filename:
+            print(f"Deleting existing document with filename: {display_filename}")
+            delete_document(doc["id"])
+
+    chunk_texts = [chunk["text"] for chunk in structured_chunks]
+    embeddings = await generate_embeddings_batch(chunk_texts)
+
+    document_id = generate_document_id()
+    uploaded_at = datetime.now(timezone.utc).isoformat()
+
+    chunks: list[dict[str, Any]] = []
+    for i, (structured_chunk, embedding) in enumerate(
+        zip(structured_chunks, embeddings, strict=False)
+    ):
+        chunks.append({
+            "id": f"{document_id}_chunk_{i}",
+            "embedding": embedding,
+            "metadata": {
+                "text": structured_chunk["text"],
+                "document_id": document_id,
+                "filename": display_filename,
+                "chunk_index": i,
+                "total_chunks": len(structured_chunks),
+                "uploaded_at": uploaded_at,
+                "is_first_chunk": i == 0,
+            },
+        })
+
+    store_chunks(chunks)
+
+    return {
+        "success": True,
+        "document_id": document_id,
+        "filename": display_filename,
+        "chunks": len(structured_chunks),
+    }
+
+
 @app.post("/upload")
 async def upload(
     file: Annotated[UploadFile, File()],
@@ -644,71 +806,12 @@ async def upload(
 ) -> dict[str, Any]:
     """Upload and process a document file."""
     try:
-        if not config.OPENAI_API_KEY:
-            raise HTTPException(
-                status_code=500,
-                detail="OPENAI_API_KEY not configured. Please set environment variables in Vercel dashboard.",
-            )
-        if not config.PINECONE_API_KEY:
-            raise HTTPException(
-                status_code=500,
-                detail="PINECONE_API_KEY not configured. Please set environment variables in Vercel dashboard.",
-            )
-
         display_filename = filename or file.filename or "unknown"
-
-        structured_chunks = extract_structured_chunks(file)
-        if not structured_chunks:
-            raise HTTPException(status_code=400, detail="No content to process")
-
-        existing_docs = list_documents()
-        for doc in existing_docs:
-            if doc.get("filename") == display_filename and doc.get("id"):
-                print(f"Deleting existing document with filename: {display_filename}")
-                delete_document(str(doc["id"]))
-
-        chunk_texts = [chunk["text"] for chunk in structured_chunks]
-        embeddings = await generate_embeddings_batch(chunk_texts)
-
-        document_id = generate_document_id()
-        uploaded_at = datetime.now(timezone.utc).isoformat()
-
-        chunks: list[dict[str, Any]] = []
-        for i, (structured_chunk, embedding) in enumerate(
-            zip(structured_chunks, embeddings, strict=False)
-        ):
-            chunks.append(
-                {
-                    "id": f"{document_id}_chunk_{i}",
-                    "embedding": embedding,
-                    "metadata": {
-                        "text": structured_chunk["text"],
-                        "document_id": document_id,
-                        "filename": display_filename,
-                        "page_number": structured_chunk.get("page_number"),
-                        "slide_number": structured_chunk.get("slide_number"),
-                        "chunk_index": i,
-                        "total_chunks": len(structured_chunks),
-                        "uploaded_at": uploaded_at,
-                        "is_first_chunk": i == 0,
-                    },
-                }
-            )
-
-        store_chunks(chunks)
-
-        return {
-            "success": True,
-            "document_id": document_id,
-            "filename": display_filename,
-            "chunks": len(structured_chunks),
-        }
-
+        return await _process_file(file, display_filename)
     except HTTPException:
         raise
     except Exception as e:
         import traceback
-
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         raise HTTPException(status_code=500, detail=error_detail) from e
 
@@ -743,17 +846,6 @@ async def upload_from_url(request: dict[str, Any]) -> dict[str, Any]:
         if not url or not filename:
             raise HTTPException(status_code=400, detail="Missing url or filename")
 
-        if not config.OPENAI_API_KEY:
-            raise HTTPException(
-                status_code=500,
-                detail="OPENAI_API_KEY not configured. Please set environment variables in Vercel dashboard.",
-            )
-        if not config.PINECONE_API_KEY:
-            raise HTTPException(
-                status_code=500,
-                detail="PINECONE_API_KEY not configured. Please set environment variables in Vercel dashboard.",
-            )
-
         import httpx
 
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -761,66 +853,52 @@ async def upload_from_url(request: dict[str, Any]) -> dict[str, Any]:
             response.raise_for_status()
             content = response.content
 
-        class FakeUploadFile:
-            def __init__(self, content: bytes, filename: str):
-                self.file = io.BytesIO(content)
-                self.filename = filename
-                self.content_type = "application/octet-stream"
-
-        fake_file = FakeUploadFile(content, filename)
-
-        structured_chunks = extract_structured_chunks(fake_file)  # type: ignore[arg-type]
-        if not structured_chunks:
-            raise HTTPException(status_code=400, detail="No content to process")
-
-        existing_docs = list_documents()
-        for doc in existing_docs:
-            if doc.get("filename") == filename and doc.get("id"):
-                print(f"Deleting existing document with filename: {filename}")
-                delete_document(str(doc["id"]))
-
-        chunk_texts = [chunk["text"] for chunk in structured_chunks]
-        embeddings = await generate_embeddings_batch(chunk_texts)
-
-        document_id = generate_document_id()
-        uploaded_at = datetime.now(timezone.utc).isoformat()
-
-        chunks: list[dict[str, Any]] = []
-        for i, (structured_chunk, embedding) in enumerate(
-            zip(structured_chunks, embeddings, strict=False)
-        ):
-            chunks.append(
-                {
-                    "id": f"{document_id}_chunk_{i}",
-                    "embedding": embedding,
-                    "metadata": {
-                        "text": structured_chunk["text"],
-                        "document_id": document_id,
-                        "filename": filename,
-                        "page_number": structured_chunk.get("page_number"),
-                        "slide_number": structured_chunk.get("slide_number"),
-                        "chunk_index": i,
-                        "total_chunks": len(structured_chunks),
-                        "uploaded_at": uploaded_at,
-                        "is_first_chunk": i == 0,
-                    },
-                }
-            )
-
-        store_chunks(chunks)
-
-        return {
-            "success": True,
-            "document_id": document_id,
-            "filename": filename,
-            "chunks": len(structured_chunks),
-        }
+        fake_file = _make_file_obj(content, filename)
+        return await _process_file(fake_file, filename)
 
     except HTTPException:
         raise
     except Exception as e:
         import traceback
+        error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
+        raise HTTPException(status_code=500, detail=error_detail) from e
 
+
+@app.post("/upload-from-urls")
+async def upload_from_urls(request: dict[str, Any]) -> dict[str, Any]:
+    """Download file parts from multiple blob URLs, concatenate, and process.
+
+    Used by the chunked upload flow: each part was uploaded as an individual
+    small blob. This endpoint downloads them all in parallel, concatenates
+    in order, and processes the assembled file.
+    """
+    try:
+        urls: list[str] = request.get("urls", [])
+        filename: str | None = request.get("filename")
+
+        if not urls or not filename:
+            raise HTTPException(status_code=400, detail="Missing urls or filename")
+
+        import asyncio
+
+        import httpx
+
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            responses = await asyncio.gather(
+                *[client.get(url) for url in urls]
+            )
+
+        # Concatenate parts in order (urls are already sorted by the caller)
+        content = b"".join(r.content for r in responses)
+        print(f"[upload-from-urls] Downloaded {len(urls)} parts ({len(content) / 1024 / 1024:.2f} MB)")
+
+        fake_file = _make_file_obj(content, filename)
+        return await _process_file(fake_file, filename)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
         error_detail = f"{str(e)}\n\nTraceback:\n{traceback.format_exc()}"
         raise HTTPException(status_code=500, detail=error_detail) from e
 
