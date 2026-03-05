@@ -142,6 +142,11 @@ export default function Home() {
       }
 
       const data: ChatResponse = await res.json();
+
+      console.log("CHAT RESPONSE:", data);
+      console.log("SOURCES:", (data as any).sources);
+      console.log("KEYS:", Object.keys(data as any));
+      
       setMessages((prev) => [
         ...prev,
         {
