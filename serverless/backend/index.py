@@ -62,8 +62,8 @@ class Config:
     PINECONE_INDEX = os.environ.get("PINECONE_INDEX", "mba-copilot")
 
     # RAG Settings (token-based)
-    CHUNK_TOKENS_DOCS = 800
-    CHUNK_OVERLAP_TOKENS_DOCS = 150
+    CHUNK_TOKENS_DOCS = 2000
+    CHUNK_OVERLAP_TOKENS_DOCS = 200
 
     # Retrieval settings
     RETRIEVAL_TOP_K = 20
@@ -391,11 +391,6 @@ def generate_embedding(text: str) -> list[float]:
 
 
 async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
-    """Generate embeddings for multiple texts using parallel individual requests."""
-    import asyncio
-    from openai import AsyncOpenAI
-
-    async def generate_embeddings_batch(texts: list[str]) -> list[list[float]]:
     """Generate embeddings sequentially (CBS gateway friendly)."""
     embeddings: list[list[float]] = []
 
